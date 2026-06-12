@@ -1,6 +1,6 @@
-
 import streamlit as st
-import ollama
+from google import genai
+from google.genai import types
 import time
 import datetime
 import random
@@ -11,6 +11,13 @@ st.set_page_config(
     page_icon="🧠",
     layout="wide",
 )
+
+# ---------------- GEMINI CLIENT INITIALIZATION ----------------
+# Securely pulls the API key from your Streamlit App Secrets
+try:
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+except Exception:
+    client = None
 
 # ---------------- SESSION STATE ----------------
 defaults = {
@@ -96,7 +103,6 @@ css = """
     100% { background-position: 0% 50%; }
 }
 
-/* ---- Animated robot background ---- */
 .robot-bg {
     position: fixed;
     bottom: -20px;
@@ -113,7 +119,6 @@ css = """
     50%       { transform: translateY(-18px) rotate(3deg); }
 }
 
-/* ---- Mascot ---- */
 .mascot-wrap {
     display: flex;
     align-items: center;
@@ -131,7 +136,6 @@ css = """
     50%       { transform: translateY(-6px); }
 }
 
-/* ---- Typing dots ---- */
 .typing-dots { display: inline-flex; gap: 5px; align-items: center; padding: 12px 18px; }
 .typing-dots span {
     width: 9px; height: 9px;
@@ -148,7 +152,6 @@ css = """
     40%            { transform: scale(1.2); opacity: 1; }
 }
 
-/* ---- Message bubbles ---- */
 .msg-row { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 14px; animation: msgSlide 0.35s ease; }
 .msg-row.user { flex-direction: row-reverse; }
 @keyframes msgSlide {
@@ -199,7 +202,6 @@ css = """
     box-shadow: 0 2px 10px rgba(0,0,0,0.04);
 }
 
-/* ---- Response box ---- */
 .response-box {
     height: 62vh;
     overflow-y: auto;
@@ -212,7 +214,6 @@ css = """
 .response-box::-webkit-scrollbar { width: 5px; }
 .response-box::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
 
-/* ---- Cards ---- */
 .card {
     background: #ffffff;
     border: 1px solid #e2e8f0;
@@ -232,7 +233,6 @@ css = """
     margin-bottom: 12px;
 }
 
-/* ---- Sidebar Buttons Text Fix ---- */
 .stSidebar .stButton > button {
     border-radius: 10px !important;
     height: auto !important;
@@ -251,7 +251,6 @@ css = """
     background: rgba(25, 118, 210, 0.05) !important;
 }
 
-/* ---- Circular Send Button Alignment ---- */
 .send-btn-container {
     display: flex;
     justify-content: flex-start;
@@ -273,10 +272,8 @@ css = """
     box-shadow: 0 6px 20px rgba(25, 118, 210, 0.3) !important;
 }
 
-/* ---- Progress / sliders ---- */
 .stSlider > div > div { accent-color: #1976d2; }
 
-/* ---- Score badges ---- */
 .score-badge {
     display: inline-block;
     padding: 6px 16px;
@@ -289,7 +286,6 @@ css = """
 .score-mid  { background: rgba(234, 179, 8, 0.1);  color: #ca8a04; border: 1px solid #fef08a; }
 .score-high { background: rgba(239, 68, 68, 0.1);  color: #dc2626; border: 1px solid #fecaca; }
 
-/* ---- Meditation ring ---- */
 .med-ring {
     width: 140px; height: 140px;
     border-radius: 50%;
@@ -315,7 +311,6 @@ css = """
     50%       { transform: scale(1.02); }
 }
 
-/* ---- Breathing circle ---- */
 .breath-circle {
     width: 120px; height: 120px;
     border-radius: 50%;
@@ -336,7 +331,6 @@ css = """
     62.5%     { transform: scale(1.3); opacity: 1;   }
 }
 
-/* Misc resets */
 footer { visibility: hidden; }
 h1, h2, h3 { color: #0f172a !important; }
 .stTextArea textarea { background: #ffffff !important; color: #0f172a !important; border: 1px solid #cbd5e1 !important; border-radius: 12px !important; }
@@ -424,7 +418,7 @@ if st.session_state.show_questionnaire:
             if invert:
                 cls = "score-high" if val<=low else "score-mid" if val<=high else "score-low"
             else:
-                cls = "score-low" if val<=low else "score-mid" if val+high else "score-high"
+                cls = "score-low" if val<=low else "score-mid" if val<=high else "score-high"
             return f'<span class="score-badge {cls}">{val}/10</span>'
 
         st.markdown(f"""
@@ -581,7 +575,7 @@ def get_chat_html(history):
         </div>"""
     return html
 
-# ---- RESPONSE MANAGER ----
+# ---- RESPONSE MANAGER (UPDATED FOR GOOGLE GEMINI API) ----
 def generate_response(user_input, chat_container):
     now = datetime.datetime.now().strftime("%H:%M")
     st.session_state.conversation_history.append({
@@ -599,16 +593,37 @@ def generate_response(user_input, chat_container):
     """
     chat_container.markdown(f'<div class="response-box" id="chat-box">{past_html + typing_dots}</div>', unsafe_allow_html=True)
 
-    messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.conversation_history]
-    
-    try:
-        response = ollama.chat(model="llama3.1:8b", messages=messages)
-        ai_response = response['message']['content']
-    except Exception as e:
-        ai_response = f"⚠️ Could not connect to Ollama. Ensure it's running with `ollama serve`. Error: {str(e)}"
+    if client is None:
+        ai_response = "⚠️ Gemini client is missing. Please map `GEMINI_API_KEY` inside your Streamlit secrets setup."
+    else:
+        try:
+            # Map history into Gemini SDK structured Content format
+            gemini_contents = []
+            for m in st.session_state.conversation_history:
+                # Convert 'assistant' naming convention to Gemini standard 'model'
+                gemini_role = "model" if m["role"] == "assistant" else "user"
+                gemini_contents.append(
+                    types.Content(
+                        role=gemini_role,
+                        parts=[types.Part.from_text(text=m["content"])]
+                    )
+                )
+
+            # Generate response via the native Google genai SDK wrapper
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=gemini_contents,
+                config=types.GenerateContentConfig(
+                    system_instruction="You are CalmConnect AI, a compassionate, supportive, and active-listening mental health companion. Provide concise, warm, and highly empathetic responses."
+                )
+            )
+            ai_response = response.text
+        except Exception as e:
+            ai_response = f"⚠️ Could not connect to Gemini Cloud API. Error details: {str(e)}"
 
     ai_ts = datetime.datetime.now().strftime("%H:%M")
     
+    # Word-by-word streaming rendering interface simulation
     displayed = ""
     for word in ai_response.split():
         displayed += word + " "
@@ -622,7 +637,7 @@ def generate_response(user_input, chat_container):
         </div>
         """
         chat_container.markdown(f'<div class="response-box" id="chat-box">{past_html + live_ai_msg}</div>', unsafe_allow_html=True)
-        time.sleep(0.03)
+        time.sleep(0.02)
 
     st.session_state.conversation_history.append({
         "role": "assistant",
@@ -665,5 +680,3 @@ with col2:
 if send and user_input.strip():
     generate_response(user_input, chat_box_slot)
     st.rerun()
-
-
