@@ -1,15 +1,27 @@
 import streamlit as st
-import ollama
+from groq import Groq
 import time
 import datetime
 import random
 
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="CalmConnect – Mental Health Support",
     page_icon="🧠",
     layout="wide",
 )
 
+# ---------------- API INITIALIZATION ----------------
+# Securely pulls the free API key from Streamlit's Advanced Settings Secrets panel
+# Get a free key instantly at https://console.groq.com/
+HAS_API_KEY = "GROQ_API_KEY" in st.secrets
+
+if HAS_API_KEY:
+    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+else:
+    client = None
+
+# ---------------- SESSION STATE ----------------
 defaults = {
     "conversation_history": [],
     "user_name": "User",
@@ -42,7 +54,7 @@ AFFIRMATIONS = [
     "Be gentle with yourself today. 🌸",
 ]
 
-# --- SIDEBAR ---
+# ---------------- SIDEBAR ----------------
 st.sidebar.title("⚙️ Settings & Tools")
 st.session_state.user_name = st.sidebar.text_input("Your name", value=st.session_state.user_name)
 
@@ -70,7 +82,7 @@ if st.sidebar.button("🔄 Next Affirmation", use_container_width=True):
     st.session_state.affirmation_index += 1
     st.rerun()
 
-# --- CSS STYLING --------
+# ---------------- CSS STYLING ----------------
 css = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600&family=Space+Grotesk:wght=400;600;700&display=swap');
@@ -346,6 +358,10 @@ label { color: #334155 !important; font-weight: 500; }
 """
 st.markdown(css, unsafe_allow_html=True)
 
+# ---- INTERNSHIP INSTRUCTION BANNER ----
+if not HAS_API_KEY:
+    st.warning("⚠️ **Evaluation Notice:** Cloud API key (`GROQ_API_KEY`) is missing in Streamlit Secrets. Please check the repository's README setup documentation to bind the cloud model inference, or add it to your deployed App Secrets.")
+
 # ---- Background Animated Grid SVG ----
 st.markdown("""
 <svg class="robot-bg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
@@ -596,13 +612,19 @@ def generate_response(user_input, chat_container):
     """
     chat_container.markdown(f'<div class="response-box" id="chat-box">{past_html + typing_dots}</div>', unsafe_allow_html=True)
 
-    messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.conversation_history]
-    
-    try:
-        response = ollama.chat(model="llama3.1:8b", messages=messages)
-        ai_response = response['message']['content']
-    except Exception as e:
-        ai_response = f"⚠️ Could not connect to Ollama. Ensure it's running with `ollama serve`. Error: {str(e)}"
+    if not client:
+        ai_response = "⚠️ Chat execution halted. Secure cloud API key variable is unassigned. Please supply a valid GROQ_API_KEY inside Streamlit app secrets configuration panel."
+    else:
+        messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.conversation_history]
+        try:
+            # Invoking highly responsive, fully hosted Llama 3.1 8B model over the cloud
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=messages
+            )
+            ai_response = response.choices[0].message.content
+        except Exception as e:
+            ai_response = f"⚠️ Connection interface exception occurred. Error details: {str(e)}"
 
     ai_ts = datetime.datetime.now().strftime("%H:%M")
     
