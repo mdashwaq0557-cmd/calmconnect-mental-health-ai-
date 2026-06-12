@@ -73,7 +73,7 @@ if st.sidebar.button("🔄 Next Affirmation", use_container_width=True):
     st.rerun()
 
 # ---------------- CSS STYLING ----------------
-css = """
+css = 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600&family=Space+Grotesk:wght=400;600;700&display=swap');
 
